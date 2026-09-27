@@ -826,11 +826,16 @@ def sdpa_forward(
                     )
             else:
                 recompute_after_kernel = True
-    # Only the kernel path passes the ranges, so ops that predate the keyword
-    # still run the kernel for text rows and leave image rows to the recompute.
-    mm_kwargs = (
-        {} if mm_prefix_ranges is None else {"mm_prefix_ranges": mm_prefix_ranges}
-    )
+    # Older native builds keep the existing whole-batch route.
+    paged_kwargs: dict[str, int | mx.array] = {}
+    if bool(getattr(ops, "supports_decode_routing_metadata", lambda: False)()):
+        paged_kwargs.update(
+            num_decode_requests=ctx.num_decode_requests,
+            num_decode_tokens=ctx.num_decode_tokens,
+            max_decode_context_len=ctx.max_decode_context_len,
+        )
+    if mm_prefix_ranges is not None:
+        paged_kwargs["mm_prefix_ranges"] = mm_prefix_ranges
     out = mx.array(0)
     if kv_cache.turboquant:
         # Reshape scale/zero caches for kernel block size
@@ -880,7 +885,7 @@ def sdpa_forward(
             quant_type=kv_cache.k_quant,
             v_bits=kv_cache.v_bits,
             window_seqlen_q=ctx.verify_window_q,
-            **mm_kwargs,
+            **paged_kwargs,
         )
     else:
         ops.paged_attention_primitive(
@@ -899,7 +904,7 @@ def sdpa_forward(
             out,
             window_seqlen_q=ctx.verify_window_q,
             sinks=sinks,
-            **mm_kwargs,
+            **paged_kwargs,
         )
 
     if recompute_after_kernel:
