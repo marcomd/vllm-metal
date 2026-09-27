@@ -78,6 +78,11 @@ class PagedAttentionContext:
     # This lets attention wrappers distinguish pure prefill from mixed prefill+decode
     # without reverse-engineering one-token segments from ``cu_seqlens``.
     num_decode_requests: int = 0
+    # Number of query rows contributed by the decode prefix. This differs from
+    # ``num_decode_requests`` for speculative verification windows.
+    num_decode_tokens: int = 0
+    # Longest decode context, including query rows scheduled this step.
+    max_decode_context_len: int = 0
     # Per-segment caller-supplied M-RoPE positions: each entry is either
     # ``None`` (use ``offsets[i]`` with sequential arange) or an
     # ``(3, 1, seg_len)`` array.  ``None`` for the whole field skips
@@ -228,6 +233,8 @@ def prepare_grouped(
     offsets: list[int] = []
 
     max_decode_window = 1
+    num_decode_tokens = 0
+    max_decode_context_len = 0
 
     # Decode requests first.  Multi-token decode requests are speculative
     # verification windows.  The default expanded layout keeps one segment
@@ -238,6 +245,8 @@ def prepare_grouped(
             num_tokens = 1
         else:
             block_ids_by_group, seq_len, num_tokens = decode_request
+        num_decode_tokens += num_tokens
+        max_decode_context_len = max(max_decode_context_len, seq_len + num_tokens)
 
         for group_index, block_size in enumerate(block_sizes):
             block_ids = block_ids_by_group[group_index]
@@ -300,6 +309,8 @@ def prepare_grouped(
             cu_seqlens=cu_seqlens,
             offsets=offsets,
             num_decode_requests=len(decode_requests),
+            num_decode_tokens=num_decode_tokens,
+            max_decode_context_len=max_decode_context_len,
             # Window routing applies only to pure-verification batches. Any
             # prefill segment keeps the whole batch on a prefill kernel (tiled,
             # or NAX on M5), never the verification-window kernel.
