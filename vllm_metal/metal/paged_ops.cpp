@@ -399,6 +399,12 @@ static void dispatch_paged_attention_tiled(
   int num_seqs   = static_cast<int>(cu_seqlens_q.shape(0)) - 1;
 
   int total_q_blocks = total_q_tokens / cfg.BQ + num_seqs;
+  if (q_block_offset < 0 || q_block_offset > total_q_blocks) {
+    throw std::invalid_argument(
+        "dispatch_paged_attention_tiled: q_block_offset (" +
+        std::to_string(q_block_offset) + ") out of range for total_q_blocks "
+        "(" + std::to_string(total_q_blocks) + ")");
+  }
   bool use_sinks = sinks != nullptr;
   bool use_mm_prefix = mm_prefix_ranges != nullptr;
 

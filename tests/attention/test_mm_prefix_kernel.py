@@ -381,9 +381,9 @@ def test_batch_with_a_decode_row_and_two_prefill_segments(force_tiled_prefill) -
     segment's ranges; a wrong table row would attend to another request's cache.
     """
     window = 128
-    segments = [(1, 50, None), (128, 300, (220, 280)), (96, 200, (150, 200))]
+    segments = [(1, 4096, None), (128, 300, (220, 280)), (96, 200, (150, 200))]
     cu_seqlens = [0, 1, 129, 225]
-    context_lens = [50, 300, 200]
+    context_lens = [4096, 300, 200]
     mx.random.seed(7)
     row_tables: list[list[int]] = []
     next_block = 1
@@ -402,7 +402,14 @@ def test_batch_with_a_decode_row_and_two_prefill_segments(force_tiled_prefill) -
     ranges = _range_rows(
         cu_seqlens, context_lens, [None if b is None else [b] for _, _, b in segments]
     )
-    common = {"kv_lens": context_lens, "cu_seqlens_q": cu_seqlens, "window": window}
+    common = {
+        "kv_lens": context_lens,
+        "cu_seqlens_q": cu_seqlens,
+        "window": window,
+        "num_decode_requests": 1,
+        "num_decode_tokens": 1,
+        "max_decode_context_len": 4096,
+    }
     plain = _kernel(query, key_cache, value_cache, table, **common)
     got = _kernel(query, key_cache, value_cache, table, ranges=ranges, **common)
     got_np, plain_np = np.array(got), np.array(plain)

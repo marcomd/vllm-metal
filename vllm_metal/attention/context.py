@@ -81,7 +81,10 @@ class PagedAttentionContext:
     # Number of query rows contributed by the decode prefix. This differs from
     # ``num_decode_requests`` for speculative verification windows.
     num_decode_tokens: int = 0
-    # Longest decode context, including query rows scheduled this step.
+    # Longest decode context length after this step's tokens land, i.e. the
+    # maximum over decode rows of (pre-step cached KV length from
+    # ``seq_lens`` + query rows scheduled this step). Not the pre-step
+    # ``seq_lens`` value alone.
     max_decode_context_len: int = 0
     # Per-segment caller-supplied M-RoPE positions: each entry is either
     # ``None`` (use ``offsets[i]`` with sequential arange) or an
