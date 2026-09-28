@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Opt-in vLLM worker for the MPS proof of concept."""
 
-from functools import wraps
-
 import psutil
 import torch
 from vllm.utils.torch_utils import set_random_seed
@@ -11,31 +9,10 @@ from vllm_metal.pytorch_backend.runner import MPSModelRunner
 from vllm_metal.v1.worker import MetalWorker, init_worker_distributed_environment
 
 
-def _patch_mps_mrv2_validation():
-    from vllm.config import VllmConfig
-
-    from vllm_metal import envs
-
-    original = VllmConfig._validate_v2_model_runner
-    if getattr(original, "_metal_mrv2", False):
-        return
-
-    @wraps(original)
-    def validate(config):
-        if envs.VLLM_METAL_BACKEND != "mps":
-            return original(config)
-        # Keep upstream feature validation; MPS replaces the Triton operations.
-        unsupported = config._get_v2_model_runner_unsupported_features()
-        if unsupported:
-            raise ValueError(f"MPS MRV2 does not support: {', '.join(unsupported)}")
-
-    validate._metal_mrv2 = True
-    VllmConfig._validate_v2_model_runner = validate
-
-
 def configure_mps(config):
     from vllm import envs as vllm_envs
     from vllm.config.compilation import CompilationMode, CUDAGraphMode
+    from vllm.triton_utils import HAS_TRITON, triton
 
     from vllm_metal import envs
 
@@ -44,6 +21,11 @@ def configure_mps(config):
             raise ValueError("Experimental MPS requires VLLM_USE_V2_MODEL_RUNNER=1")
         if not vllm_envs.VLLM_USE_HW_AGNOSTIC:
             raise ValueError("Experimental MPS requires VLLM_USE_HW_AGNOSTIC=1")
+        if (
+            not HAS_TRITON
+            or triton.runtime.driver.active.get_current_target().backend != "mps"
+        ):
+            raise ValueError("MPS sampling requires a working Triton Apple backend")
 
     model = config.model_config
     if (
@@ -81,7 +63,6 @@ def configure_mps(config):
             f"Experimental MPS does not support {', '.join(unsupported)}"
         )
     model.model_impl = "transformers"
-    _patch_mps_mrv2_validation()
     config.cache_config.block_size = 16
     config.scheduler_config.async_scheduling = False
     config.compilation_config.mode = CompilationMode.NONE

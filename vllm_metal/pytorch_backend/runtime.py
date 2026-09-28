@@ -77,7 +77,6 @@ def staged_write(self):
 
 def install():
     from vllm.v1.worker.gpu import buffer_utils, model_runner
-    from vllm.v1.worker.gpu.sample import sampler
 
     from vllm_metal.pytorch_backend import input_ops
 
@@ -96,6 +95,4 @@ def install():
     buffer_utils.UvaBackedTensor.copy_to_uva = copy_changed_state
 
     input_ops.install()
-    # validate_request limits this baseline to plain greedy generation.
-    sampler.gumbel_sample = lambda logits, *args, **kwargs: logits.argmax(dim=-1)
     buffer_utils._metal_installed = True

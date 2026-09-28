@@ -125,6 +125,16 @@ class MetalPlatform(Platform):
     _dp_ray_hook_registered: bool = False
 
     @classmethod
+    def num_compute_units(cls, device_id: int = 0) -> int:
+        if envs.VLLM_METAL_BACKEND != "mps":
+            return super().num_compute_units(device_id)
+        from vllm.triton_utils import triton
+
+        return triton.runtime.driver.active.utils.get_device_properties(device_id)[
+            "multiprocessorCount"
+        ]
+
+    @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:
         """Get the name of the Metal device.
 
@@ -294,29 +304,18 @@ class MetalPlatform(Platform):
             if enabled
         ]
         if envs.VLLM_METAL_BACKEND == "mps":
-            unsupported_controls += [
-                name
-                for name, enabled in (
-                    ("temperature", params.temperature != 0),
-                    ("presence_penalty", params.presence_penalty != 0),
-                    ("frequency_penalty", params.frequency_penalty != 0),
-                    ("repetition_penalty", params.repetition_penalty != 1),
-                    ("allowed_token_ids", bool(params.allowed_token_ids)),
-                    ("bad_words", bool(params.bad_words)),
-                )
-                if enabled
-            ]
-            unsupported_controls += [
+            unsupported_controls = [
                 name
                 for name in (
-                    "logprobs",
-                    "logprob_token_ids",
                     "prompt_logprobs",
                     "structured_outputs",
                     "thinking_token_budget",
                 )
                 if getattr(params, name, None) is not None
             ]
+            # The Apple Triton backend cannot yet compile this upstream kernel.
+            if params.bad_words or params.bad_words_token_ids:
+                unsupported_controls.append("bad_words")
         if unsupported_controls:
             controls = ", ".join(unsupported_controls)
             raise VLLMValidationError(
