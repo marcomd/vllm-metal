@@ -26,6 +26,25 @@ uv pip install -e ".[dev]"
 and editable plugin, and builds the native artifacts. It downloads the Metal
 toolchain if needed. Restart the server after editing Python files.
 
+### Experimental PyTorch MPS
+
+From a source checkout, `./install.sh --mps` creates `.venv-vllm-metal-mps`,
+installs the compiler/backend revisions pinned in the `mps` extra, and builds
+them against the checksum-verified upstream LLVM SDK. The first build takes
+several minutes and needs the Xcode setup above.
+
+```bash
+./install.sh --mps
+source .venv-vllm-metal-mps/bin/activate
+export VLLM_METAL_BACKEND=mps TOOLCHAINS=Metal
+vllm serve Qwen/Qwen3-0.6B --dtype float16
+```
+
+The installer applies the temporary vLLM CPU-wheel device-detection workaround
+only in this MPS environment and verifies an upstream sampling kernel. Use the
+default environment for MLX. Bad-word filtering remains disabled pending the
+upstream compiler fix.
+
 ## Editing the Metal kernels
 
 When changing `.metal` shaders or `paged_ops.cpp`, enable source builds:

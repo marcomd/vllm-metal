@@ -128,6 +128,91 @@ install_vllm() {
   success "Installed vLLM core"
 }
 
+install_mps_dependencies() {
+  section "Building pinned Triton and Apple backend"
+  # These are build tools, not runtime dependencies of the default MLX path.
+  uv pip install setuptools wheel 'cmake>=3.20,<4' ninja \
+    'nanobind==2.10.2' 'scikit-build-core>=0.10' requests
+
+  local sources triton_url backend_url backend_repo backend_ref build_dir llvm_dir
+  sources=$(python - <<'PY'
+import tomllib
+from packaging.requirements import Requirement
+
+with open("pyproject.toml", "rb") as f:
+    extra = tomllib.load(f)["project"]["optional-dependencies"]["mps"]
+requirements = {r.name: r for r in map(Requirement, extra)}
+for name in ("triton", "triton-apple-backend"):
+    print(requirements[name].url)
+PY
+  )
+  triton_url=$(printf '%s\n' "$sources" | sed -n '1p')
+  backend_url=$(printf '%s\n' "$sources" | sed -n '2p')
+  backend_repo="${backend_url#git+}"
+  backend_repo="${backend_repo%@*}"
+  backend_ref="${backend_url##*@}"
+  backend_ref="${backend_ref%%#*}"
+  build_dir=$(mktemp -d)
+  register_cleanup_dir "$build_dir"
+  git init --quiet "$build_dir/backend"
+  git -C "$build_dir/backend" fetch --quiet --depth 1 "$backend_repo" "$backend_ref"
+  git -C "$build_dir/backend" checkout --quiet --detach FETCH_HEAD
+
+  # Upstream selects the pinned macOS LLVM SDK and verifies its checksum.
+  llvm_dir=$(cd "$build_dir" && python backend/ci/download_llvm.py)
+  (
+    export LLVM_SYSPATH="$build_dir/$llvm_dir"
+    export LLVM_INSTALL_DIR="$LLVM_SYSPATH"
+    export TRITON_EXT_ENABLED=1 TRITON_BUILD_PROTON=OFF
+    export MAX_JOBS="${MAX_JOBS:-8}"
+    export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
+    uv pip install --no-build-isolation "$triton_url"
+    uv pip install --no-build-isolation "$backend_url"
+    uv pip install --no-build-isolation -e '.[mps]'
+  )
+  # Temporary vLLM 0.30 workaround, confined to this MPS environment. Replace
+  # the file atomically so uv's shared package cache cannot be modified.
+  python - <<'PY'
+from importlib.util import find_spec
+from pathlib import Path
+import sys
+
+path = Path(find_spec("vllm").origin).parent / "triton_utils/importing.py"
+if not path.resolve().is_relative_to(Path(sys.prefix).resolve()):
+    raise RuntimeError("Refusing to patch vLLM outside the MPS environment")
+source = path.read_text()
+old = 'if "cpu" in version("vllm"):'
+new = 'if "cpu" in version("vllm") and current_platform.is_cpu():'
+if new not in source:
+    if source.count(old) != 1:
+        raise RuntimeError("vLLM Triton detection changed; review the MPS install workaround")
+    temporary = path.with_suffix(".py.mps")
+    temporary.write_text(source.replace(old, new))
+    temporary.replace(path)
+print("Applied the vLLM CPU-wheel Triton workaround in the MPS environment")
+PY
+  VLLM_METAL_BACKEND=mps python - <<'PY'
+import torch
+import triton
+from vllm.triton_utils import HAS_TRITON
+from vllm.v1.worker.gpu.sample.gumbel import gumbel_sample
+
+if not HAS_TRITON or not torch.backends.mps.is_available():
+    raise RuntimeError("Triton or PyTorch MPS is unavailable")
+target = triton.runtime.driver.active.get_current_target()
+if target.backend != "mps":
+    raise RuntimeError(f"Expected the Triton Apple backend, got {target}")
+logits = torch.arange(32, dtype=torch.float32, device="mps")[None, :]
+mapping = torch.zeros(1, dtype=torch.int32, device="mps")
+seed = torch.zeros(1, dtype=torch.int64, device="mps")
+sampled = gumbel_sample(logits, mapping, torch.zeros(1, device="mps"),
+                        seed, seed, apply_temperature=False, is_drafting=False)
+if sampled.item() != 31:
+    raise RuntimeError("Upstream Triton sampling verification failed")
+print(f"Verified upstream vLLM sampling with Triton {triton.__version__} on {target}")
+PY
+}
+
 download_and_install_wheel() {
   local wheel_url="$1"
   local package_name="$2"
@@ -173,9 +258,13 @@ main() {
 
   # Override the default dev channel with --stable or VLLM_METAL_CHANNEL.
   local channel="${VLLM_METAL_CHANNEL:-dev}"
+  local mps=false
 
   for arg in "$@"; do
     case "$arg" in
+      --mps)
+        mps=true
+        ;;
       --dev)
         channel="dev"
         ;;
@@ -184,13 +273,15 @@ main() {
         ;;
       -h|--help)
         cat <<'EOF'
-Usage: install.sh [--dev | --stable]
+Usage: install.sh [--dev | --stable] [--mps]
 
 Options:
       --dev         Install the latest development build cut from main.
                     This is the default and the currently recommended channel.
       --stable      Install the latest tagged stable release. Stable releases
                     are cut by hand and may lag behind the dev channel.
+      --mps         Build the pinned experimental Triton Apple backend from a
+                    source checkout, in a separate .venv-vllm-metal-mps environment.
   -h, --help        Show this help.
 
 The channel can also be set with VLLM_METAL_CHANNEL=dev|stable.
@@ -245,6 +336,11 @@ EOF
     exit 1
   fi
 
+  if $mps && [[ -z "$local_lib" || ! -f "$local_lib" ]]; then
+    error "Experimental MPS installation requires a source checkout."
+    exit 1
+  fi
+
   if ! ensure_uv; then
     exit 1
   fi
@@ -256,6 +352,9 @@ EOF
     # working directory there instead of the caller's cwd.
     cd "$script_dir" || exit 1
     venv="$script_dir/.venv-vllm-metal"
+    if $mps; then
+      venv="${venv}-mps"
+    fi
   fi
 
   ensure_venv "$venv"
@@ -270,8 +369,14 @@ EOF
 
     # Source checkouts build native artifacts; release installs use the wheel.
     uv pip install -e .
+    if $mps; then
+      export TOOLCHAINS="${TOOLCHAINS:-Metal}"
+    fi
     ensure_metal_toolchain
     build_native_artifacts
+    if $mps; then
+      install_mps_dependencies
+    fi
   else
     local release_data selected release_tag wheel_url vllm_release_tag
     release_data=$(fetch_release "$repo_owner" "$repo_name" "$channel")
@@ -302,6 +407,9 @@ EOF
   echo ""
   echo "To use vllm, activate the virtual environment:"
   echo "  source $venv/bin/activate"
+  if $mps; then
+    echo "  export VLLM_METAL_BACKEND=mps TOOLCHAINS=Metal"
+  fi
   echo ""
   echo "Or add the venv to your PATH:"
   echo "  export PATH=\"$venv/bin:\$PATH\""

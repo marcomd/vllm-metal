@@ -67,8 +67,11 @@ dependencies = [
 
 [project.optional-dependencies]
 mps = [
-    # Experimental host launcher for PyTorch's Metal command stream.
+    # Installed in build order by ./install.sh --mps (requires the LLVM SDK).
+    "torch==2.13.0",
     "ninja>=1.11",
+    "triton @ git+https://github.com/triton-lang/triton.git@4a15f415d8ac4f830ce788c6fca3a5b3b29908e7",
+    "triton-apple-backend @ git+https://github.com/imperatormk/triton-ext.git@adbf6e843d3d8e6b4328a1895be03213fe3a8ddd#subdirectory=backend/AppleGPU",
 ]
 gguf = [
     # Local GGUF model loading. Keep aligned with upstream vLLM's lower bound
