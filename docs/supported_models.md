@@ -22,9 +22,7 @@ does not work, please open an issue rather than adding more rows or example
 checkpoints.
 
 The **PyTorch MPS** column covers the opt-in `VLLM_METAL_BACKEND=mps` path;
-blank cells are unverified. Its 🔵 entries were verified with unquantized FP16
-`Qwen/Qwen3-0.6B`, `tencent/Hunyuan-1.8B-Instruct` and
-`allenai/OLMo-2-0425-1B-Instruct`. Other columns describe MLX.
+blank cells are unverified.
 
 <!-- Keep this a high-level support matrix. Add a feature column only once at
 least one shipped model uses it (e.g. speculative decoding, tensor parallel) —
