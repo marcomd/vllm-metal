@@ -44,13 +44,14 @@ def configure_mps(config):
             raise ValueError("Experimental MPS requires VLLM_USE_V2_MODEL_RUNNER=1")
 
     model = config.model_config
+    state_layers = set(getattr(model.hf_text_config, "layer_types", None) or ())
     if (
-        model.get_head_size() != 128
+        model.get_head_size() not in (64, 128)
         or model.is_encoder_decoder
         or model.is_diffusion
         or model.is_multimodal_model
         or model.is_moe
-        or model.has_inner_state
+        or (model.has_inner_state and state_layers != {"conv", "full_attention"})
         or model.use_mla
         or model.quantization is not None
         or model.runner_type != "generate"
@@ -64,7 +65,8 @@ def configure_mps(config):
     ):
         raise NotImplementedError(
             "Experimental MPS requires an unquantized dense autoregressive "
-            "text decoder with 128-dimensional attention heads, fp16/bf16, "
+            "text decoder with 64/128-dimensional attention heads, optional "
+            "ShortConv state, fp16/bf16, "
             "one GPU, and no LoRA/speculative decoding/KV transfer."
         )
     if config.cache_config.block_size not in (None, 16):

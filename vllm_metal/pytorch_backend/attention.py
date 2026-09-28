@@ -35,7 +35,7 @@ class MPSAttentionBackend(AttentionBackend):
 
     @staticmethod
     def get_supported_head_sizes():
-        return [128]
+        return [64, 128]
 
     @staticmethod
     def get_impl_cls():
@@ -77,7 +77,7 @@ class MPSAttentionImpl(AttentionImpl[MPSAttentionMetadata]):
         **kwargs,
     ):
         if (
-            head_size != 128
+            head_size not in (64, 128)
             or alibi_slopes is not None
             or sliding_window is not None
             or logits_soft_cap is not None
@@ -118,8 +118,8 @@ class MPSAttentionImpl(AttentionImpl[MPSAttentionMetadata]):
             query.contiguous(),
             key,
             value,
-            kv_cache[..., :128],
-            kv_cache[..., 128:],
+            kv_cache[..., : self.head_size],
+            kv_cache[..., self.head_size :],
             m.slot_mapping,
             m.block_tables,
             m.seq_lens,
