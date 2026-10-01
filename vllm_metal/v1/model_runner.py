@@ -22,6 +22,7 @@ import torch
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
+from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingParams
 from vllm.tasks import SupportedTask
@@ -400,6 +401,9 @@ class MetalModelRunner:
         )
         self._pooling_backend: ExecutablePoolingBackend | None = None
         self._multimodal_adapter: MultimodalRuntimeAdapter | None = None
+        self._supports_mm_inputs: bool = MULTIMODAL_REGISTRY.supports_multimodal_inputs(
+            self.model_config
+        )
         self._gemma4_mtp_assistant: Gemma4MTPAssistantRuntime | None = None
         self._drafter: MetalProposer | None = None
         self._aux_capture: AuxHiddenStateCapture | None = None
@@ -974,11 +978,11 @@ class MetalModelRunner:
         actually use.
 
         ``None`` keeps the full-row projection whenever selection cannot apply
-        (pipeline parallel, LoRA, an adapter that rejects it), whenever the
-        model serves multimodal requests, or when the batch is smaller than
-        the rows a step can sample. The mm forward projects every packed row,
-        so on a forward-ready multimodal adapter a step with an image is the
-        worst case whatever the text path selects.
+        (pipeline parallel, LoRA, an adapter that rejects it), whenever a
+        multimodal step can run, or when the batch is smaller than the rows a
+        step can sample. The mm forward projects every packed row, so a
+        forward-ready adapter keeps the full reserve when vLLM accepts
+        multimodal inputs or the adapter requires explicit positions.
 
         This is the *sampler's* worst case. A step whose batch carries a
         prompt-logprobs request projects a logits row for every packed prompt
@@ -992,7 +996,9 @@ class MetalModelRunner:
         """
         adapter = self._multimodal_adapter
         if not self._selective_logits_supported or (
-            adapter is not None and adapter.forward_ready
+            adapter is not None
+            and adapter.forward_ready
+            and (self._supports_mm_inputs or adapter.requires_explicit_positions)
         ):
             return None
         rows = int(input_ids.shape[-1])
