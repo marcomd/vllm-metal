@@ -87,6 +87,13 @@ def test_no_rebuild_when_hash_matches(patched):
     assert build.needs_rebuild() is False
 
 
+def test_needs_rebuild_when_mlx_version_record_missing(patched):
+    patched.out.write_bytes(b"compiled")
+    patched.hsh.write_text(build._input_hash(patched.spec))
+    patched.ver.unlink()
+    assert build.needs_rebuild() is True
+
+
 def test_old_content_with_newer_so_mtime_still_rebuilds(patched):
     # Regression: under the old mtime-based check, a stale .so from a previous
     # branch could shadow freshly-checked-out sources whose mtimes git set to
