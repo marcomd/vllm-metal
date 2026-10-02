@@ -332,7 +332,7 @@ def _input_hash(spec: _BuildSpec) -> str:
 
 
 def needs_rebuild() -> bool:
-    if not _OUT.exists() or not _HASH.exists():
+    if not _OUT.exists() or not _HASH.exists() or not _MLX_VERSION.exists():
         return True
     try:
         spec = _build_spec()
