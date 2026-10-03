@@ -369,6 +369,22 @@ class TestPrepareSDPAQKV:
         mx.eval(keys, values)
         assert bool(mx.all(keys == values).item())
 
+    def test_k_eq_v_fallback_when_v_proj_is_none(self) -> None:
+        # Arrange — DiffusionGemma full-attention layers keep v_proj = None
+        inner = _make_inner(with_v_proj=False)
+        inner.v_proj = None
+        ctx = _make_ctx(_SEQ_LEN)
+        x = mx.ones((_BATCH, _SEQ_LEN, _HIDDEN))
+
+        # Act
+        _, keys, values, _, _ = prepare_sdpa_qkv(
+            inner, x, ctx, _N_HEADS, _N_KV_HEADS, shared_kv=None
+        )
+
+        # Assert — a None v_proj takes the K-eq-V path instead of calling None
+        mx.eval(keys, values)
+        assert bool(mx.all(keys == values).item())
+
     def test_qkv_proj_path_splits_phi_style_packed_projection(self) -> None:
         # Arrange — Phi3/Phi4-style attention uses a single qkv_proj linear.
         inner = _make_qkv_inner()

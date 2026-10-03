@@ -395,7 +395,9 @@ def prepare_sdpa_qkv(
                 k_proj_out = k_norm(k_proj_out)
             keys = k_proj_out.reshape(B, L, n_kv_heads, -1)
             # K-eq-V variant (Gemma4 26B/31B): no v_proj, values = keys.
-            if hasattr(inner, "v_proj"):
+            # DiffusionGemma keeps the attribute but sets it to None on
+            # full-attention layers.
+            if getattr(inner, "v_proj", None) is not None:
                 values = inner.v_proj(x).reshape(B, L, n_kv_heads, -1)
             else:
                 values = keys

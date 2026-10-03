@@ -42,6 +42,40 @@ def apply_compat_patches() -> None:
     _patch_transformers_exaone4_config()
 
 
+def ensure_vllm_v1_diffusion_guard_patch() -> None:
+    """Let Metal-served diffusion models past vLLM's V1-runner guard.
+
+    vLLM 0.30 rejects diffusion models on Model Runner V1 because its V1 GPU
+    runner lacks the canvas step protocol. ``MetalModelRunner`` implements
+    the V1 contract (vllm-metal pins ``VLLM_USE_V2_MODEL_RUNNER=0``) and
+    serves DiffusionGemma itself (``vllm_metal/v1/diffusion.py``), so drop
+    that one entry for the supported model types; any other diffusion model
+    still fails upstream's check.
+
+    Called from ``MetalPlatform.check_and_update_config``, which runs inside
+    ``VllmConfig.__post_init__`` before the V1 validation: importing
+    ``vllm.config`` at plugin registration is circular.
+    """
+    from vllm.config import VllmConfig
+
+    original = getattr(VllmConfig, "_get_v1_model_runner_unsupported_features", None)
+    if original is None or getattr(original, "_vllm_metal_patched", False):
+        return
+
+    def _unsupported_features(self: Any) -> list[str]:
+        unsupported = original(self)
+        model_config = self.model_config
+        if "diffusion models" in unsupported and model_config is not None:
+            from vllm_metal.v1.diffusion import SUPPORTED_DIFFUSION_MODEL_TYPES
+
+            if model_config.hf_config.model_type in SUPPORTED_DIFFUSION_MODEL_TYPES:
+                unsupported = [f for f in unsupported if f != "diffusion models"]
+        return unsupported
+
+    _unsupported_features._vllm_metal_patched = True  # type: ignore[attr-defined]
+    VllmConfig._get_v1_model_runner_unsupported_features = _unsupported_features
+
+
 def _patch_torch_mps_empty_host_cache() -> None:
     """Avoid PyTorch's unsupported MPS host-cache cleanup during vLLM exit."""
     import torch

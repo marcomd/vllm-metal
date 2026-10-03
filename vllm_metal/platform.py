@@ -104,6 +104,10 @@ class MetalPlatform(Platform):
     # recomputes instead of sticking (#585 shape via a second engine).
     _mb_default_installed: ClassVar[str | None] = None
 
+    # Whether the configured model is a block-diffusion LM, whose runner emits
+    # no logprobs; set by check_and_update_config for validate_request.
+    _serves_diffusion: ClassVar[bool] = False
+
     # --- Ray distributed executor support (Phase 1) ---
     # Advertise the Apple GPU as a custom Ray resource named "mlx".  Because this
     # is not "GPU", vLLM's Ray executor uses the generic
@@ -290,6 +294,13 @@ class MetalPlatform(Platform):
                 "vllm-metal does not support sampling controls backed by "
                 f"vLLM logits processors ({controls}).",
                 parameter=unsupported_controls[0],
+            )
+        if cls._serves_diffusion and (
+            params.logprobs is not None or params.prompt_logprobs is not None
+        ):
+            raise VLLMValidationError(
+                "Logprobs are not supported for diffusion models on Metal yet.",
+                parameter="logprobs",
             )
 
     @classmethod
@@ -579,6 +590,12 @@ class MetalPlatform(Platform):
                 "Speculative decoding on Metal requires synchronous "
                 "scheduling; disabled async_scheduling."
             )
+
+        cls._serves_diffusion = model_config is not None and getattr(
+            model_config, "is_diffusion", False
+        )
+        if cls._serves_diffusion:
+            cls._check_diffusion_config(vllm_config)
 
         if model_config is not None and model_config.is_hybrid:
             cache_config = vllm_config.cache_config
@@ -903,6 +920,50 @@ class MetalPlatform(Platform):
             f"Metal memory: {total_mem / 1e9:.1f}GB total, "
             f"{available_mem / 1e9:.1f}GB available"
         )
+
+    @classmethod
+    def _check_diffusion_config(cls, vllm_config: "VllmConfig") -> None:
+        """Constrain a block-diffusion LM to what ``DiffusionGemmaRuntime`` serves.
+
+        The canvas travels as draft tokens (``num_speculative_tokens ==
+        canvas_length``) and each step's new canvas reaches the scheduler
+        through ``take_draft_token_ids()``, which only the synchronous engine
+        loop calls; async scheduling would schedule placeholder drafts.
+        """
+        from vllm_metal.compat import ensure_vllm_v1_diffusion_guard_patch
+        from vllm_metal.v1.diffusion import SUPPORTED_DIFFUSION_MODEL_TYPES
+
+        model_type = vllm_config.model_config.hf_config.model_type
+        if model_type not in SUPPORTED_DIFFUSION_MODEL_TYPES:
+            raise NotImplementedError(
+                f"Diffusion model type {model_type!r} is not supported on Metal "
+                f"(supported: {sorted(SUPPORTED_DIFFUSION_MODEL_TYPES)})."
+            )
+        diffusion_config = vllm_config.diffusion_config
+        if diffusion_config is None or diffusion_config.canvas_length is None:
+            raise ValueError(
+                "Diffusion models on Metal require --diffusion-config with a "
+                "canvas_length, e.g. --diffusion-config '{\"canvas_length\": 32}'."
+            )
+        if vllm_config.speculative_config is not None:
+            raise NotImplementedError(
+                "Speculative decoding is not supported with diffusion models."
+            )
+        if vllm_config.parallel_config.pipeline_parallel_size > 1:
+            raise NotImplementedError(
+                "Pipeline parallelism is not supported with diffusion models on Metal."
+            )
+        if vllm_config.lora_config is not None:
+            raise NotImplementedError(
+                "LoRA is not supported with diffusion models on Metal."
+            )
+        if vllm_config.scheduler_config.async_scheduling:
+            vllm_config.scheduler_config.async_scheduling = False
+            logger.warning(
+                "Diffusion models on Metal require synchronous scheduling; "
+                "disabled async_scheduling."
+            )
+        ensure_vllm_v1_diffusion_guard_patch()
 
     @staticmethod
     def _disable_hybrid_prefix_caching(vllm_config: "VllmConfig", reason: str) -> None:

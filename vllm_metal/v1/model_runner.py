@@ -78,6 +78,7 @@ from vllm_metal.v1.decode_pipeline import (
     SamplingShape,
     SchedulerStepShape,
 )
+from vllm_metal.v1.diffusion import DiffusionGemmaRuntime, validate_diffusion_model
 from vllm_metal.v1.draft_model_proposer import (
     DraftDims,
     DraftModelProposer,
@@ -405,6 +406,12 @@ class MetalModelRunner:
         )
         self._gemma4_mtp_assistant: Gemma4MTPAssistantRuntime | None = None
         self._drafter: MetalProposer | None = None
+        # Block-diffusion LMs run their own step protocol (v1/diffusion.py).
+        self._diffusion: DiffusionGemmaRuntime | None = (
+            DiffusionGemmaRuntime(self)
+            if getattr(self.model_config, "is_diffusion", False)
+            else None
+        )
         self._aux_capture: AuxHiddenStateCapture | None = None
         # Cache planning needs the draft shape before weights load.
         # The paged cache binds after planning.
@@ -636,6 +643,8 @@ class MetalModelRunner:
         self._model_lifecycle.load()
         if self._uses_encoder_pooling_backend():
             return
+        if self._diffusion is not None:
+            validate_diffusion_model(self.model)
         # Prune non-owned layers adjacent to the (lazy) load, before LoRA setup or
         # cache profiling materialize weights. No-op on the single-stage path.
         if self.pp is not None:
@@ -2825,6 +2834,8 @@ class MetalModelRunner:
             raise RuntimeError("Model not loaded")
         if self._uses_encoder_pooling_backend():
             return self._run_encoder_pooling_batch(scheduler_output)
+        if self._diffusion is not None:
+            return self._diffusion.execute_model(scheduler_output)
 
         # Gate the decode pipeline for this step BEFORE any state mutation:
         # an ineligible step must resolve the pending deferred sample first so
