@@ -957,6 +957,28 @@ class MetalPlatform(Platform):
             raise NotImplementedError(
                 "LoRA is not supported with diffusion models on Metal."
             )
+        # The diffusion runtime is text-only. Zero modality limits turn an
+        # image/video request into a per-request validation error instead of an
+        # encoder input that would fail the whole engine step. Not
+        # language_model_only: that routes the load to the mlx_lm text
+        # backbone, which has no DiffusionGemma.
+        multimodal_config = vllm_config.model_config.multimodal_config
+        if multimodal_config is not None:
+            from vllm.config.multimodal import (
+                AudioDummyOptions,
+                ImageDummyOptions,
+                VideoDummyOptions,
+            )
+
+            multimodal_config.limit_per_prompt.update(
+                image=ImageDummyOptions(count=0),
+                video=VideoDummyOptions(count=0),
+                audio=AudioDummyOptions(count=0),
+            )
+            logger.warning(
+                "Diffusion models on Metal are text-only; image, video and "
+                "audio inputs are refused."
+            )
         if vllm_config.scheduler_config.async_scheduling:
             vllm_config.scheduler_config.async_scheduling = False
             logger.warning(

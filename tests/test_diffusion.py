@@ -50,6 +50,7 @@ def _vllm_config(
             canvas_length=canvas_length, max_denoising_steps=max_denoising_steps
         ),
         model_config=SimpleNamespace(
+            multimodal_config=SimpleNamespace(limit_per_prompt={}),
             try_get_generation_config=lambda: gen,
             get_vocab_size=lambda: _VOCAB,
             hf_config=SimpleNamespace(model_type=model_type),
@@ -423,6 +424,19 @@ class TestPlatformDiffusionConfig:
 
         assert vllm_config.scheduler_config.async_scheduling is False
         assert guard_patch_calls == [True]
+
+    def test_disables_multimodal_inputs(self) -> None:
+        vllm_config = _vllm_config()
+
+        MetalPlatform._check_diffusion_config(vllm_config)
+
+        # Image/video requests fail validation instead of reaching the runner.
+        limits = vllm_config.model_config.multimodal_config.limit_per_prompt
+        assert {m: o.count for m, o in limits.items()} == {
+            "image": 0,
+            "video": 0,
+            "audio": 0,
+        }
 
     def test_requires_canvas_length(self) -> None:
         with pytest.raises(ValueError, match="canvas_length"):
