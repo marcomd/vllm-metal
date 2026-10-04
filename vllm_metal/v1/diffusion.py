@@ -397,9 +397,10 @@ class DiffusionGemmaRuntime:
                 token_ids = state.token_ids[start : start + num_tokens]
             else:
                 assert request.canvas is not None
-                # A canvas the scheduler truncated at max_model_len stays short.
-                request.canvas = request.canvas[:num_tokens]
-                token_ids = request.canvas.tolist()
+                # The scheduler can clip the canvas (token budget,
+                # long_prefill_token_threshold, max_model_len); the step runs
+                # the scheduled prefix and the canvas keeps its full length.
+                token_ids = request.canvas[:num_tokens].tolist()
                 if drafts is None or list(drafts) != token_ids:
                     raise RuntimeError(
                         f"Diffusion request {req_id!r} was scheduled with drafts "
@@ -507,6 +508,14 @@ class DiffusionGemmaRuntime:
             # transient regardless of batch size.
             logits = canvas_logits(model, hidden[0, offset : offset + length])
             offset += length
+            # Like upstream, pad a clipped canvas with uniform (zero) logits:
+            # the unscheduled rows are resampled at random and, at maximum
+            # entropy, cannot make the canvas converge on their own.
+            padding = self.settings.canvas_length - length
+            if padding > 0:
+                logits = mx.concatenate(
+                    [logits, mx.zeros((padding, logits.shape[1]), dtype=logits.dtype)]
+                )
             outcome = denoise_update(
                 logits,
                 step=request.step,
@@ -517,7 +526,9 @@ class DiffusionGemmaRuntime:
             request.step += 1
             if outcome.converged:
                 request.phase = "commit"
-                request.canvas = outcome.argmax_canvas
+                # Padded rows only converge on the last step; commit only the
+                # rows the model saw.
+                request.canvas = outcome.argmax_canvas[:length]
                 request.soft_embeddings = None
             else:
                 request.canvas = outcome.next_canvas

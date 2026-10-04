@@ -949,6 +949,16 @@ class MetalPlatform(Platform):
             raise NotImplementedError(
                 "Speculative decoding is not supported with diffusion models."
             )
+        # The scheduler clips every denoising step to the threshold, so a
+        # lower one would denoise a shorter canvas than configured.
+        threshold = vllm_config.scheduler_config.long_prefill_token_threshold
+        if 0 < threshold < diffusion_config.canvas_length:
+            raise NotImplementedError(
+                "Diffusion models on Metal do not support "
+                f"--long-prefill-token-threshold ({threshold}) below the "
+                f"canvas_length ({diffusion_config.canvas_length}); raise it "
+                "or leave it unset."
+            )
         if vllm_config.parallel_config.pipeline_parallel_size > 1:
             raise NotImplementedError(
                 "Pipeline parallelism is not supported with diffusion models on Metal."

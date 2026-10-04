@@ -43,6 +43,7 @@ def _vllm_config(
     max_denoising_steps: int | None = None,
     gen_config: dict | None = None,
     model_type: str = "diffusion_gemma",
+    long_prefill_token_threshold: int = 0,
 ) -> SimpleNamespace:
     gen = _GEN_CONFIG if gen_config is None else gen_config
     return SimpleNamespace(
@@ -58,7 +59,10 @@ def _vllm_config(
         speculative_config=None,
         lora_config=None,
         parallel_config=SimpleNamespace(pipeline_parallel_size=1),
-        scheduler_config=SimpleNamespace(async_scheduling=True),
+        scheduler_config=SimpleNamespace(
+            async_scheduling=True,
+            long_prefill_token_threshold=long_prefill_token_threshold,
+        ),
     )
 
 
@@ -331,6 +335,61 @@ class TestRuntimeStepProtocol:
                 )
             )
 
+    def test_clipped_denoise_step_keeps_the_full_canvas(self, runtime) -> None:
+        rt, forwards = runtime
+        runner = rt._runner
+        new_req = SimpleNamespace(
+            req_id="r",
+            prompt_token_ids=[1, 2],
+            sampling_params=None,
+            block_ids=([0],),
+            num_computed_tokens=0,
+        )
+        rt.execute_model(_scheduler_output(new_reqs=[new_req], scheduled={"r": 2}))
+        canvas = runner._draft_token_ids.draft_token_ids[0]
+
+        # The token budget clipped the canvas to two rows for this step.
+        rt.execute_model(
+            _scheduler_output(
+                cached={"r": 2}, scheduled={"r": 2}, drafts={"r": canvas[:2]}
+            )
+        )
+
+        assert forwards[-1] == (True, [(2, canvas[:2])])
+        # The unscheduled rows are resampled, so the next step denoises all of them.
+        assert len(runner._draft_token_ids.draft_token_ids[0]) == _CANVAS
+
+    def test_clipped_converging_step_commits_only_the_scheduled_rows(
+        self, runtime
+    ) -> None:
+        rt, _ = runtime
+        runner = rt._runner
+        rt.settings = _settings(max_denoising_steps=1)
+        new_req = SimpleNamespace(
+            req_id="r",
+            prompt_token_ids=[1, 2],
+            sampling_params=None,
+            block_ids=([0],),
+            num_computed_tokens=0,
+        )
+        rt.execute_model(_scheduler_output(new_reqs=[new_req], scheduled={"r": 2}))
+        canvas = runner._draft_token_ids.draft_token_ids[0]
+
+        # The last denoise step converges with only two rows scheduled.
+        rt.execute_model(
+            _scheduler_output(
+                cached={"r": 2}, scheduled={"r": 2}, drafts={"r": canvas[:2]}
+            )
+        )
+        canvas = runner._draft_token_ids.draft_token_ids[0]
+        out = rt.execute_model(
+            _scheduler_output(cached={"r": 2}, scheduled={"r": 2}, drafts={"r": canvas})
+        )
+
+        # The rows the model never saw this step are not committed.
+        assert canvas == [3, 1]
+        assert out.sampled_token_ids == [[3, 1]]
+
     def test_finished_requests_drop_their_canvas(self, runtime) -> None:
         rt, _ = runtime
         new_req = SimpleNamespace(
@@ -491,6 +550,15 @@ class TestPlatformDiffusionConfig:
         )
         with pytest.raises(NotImplementedError, match="TurboQuant"):
             MetalPlatform._check_diffusion_config(_vllm_config())
+
+    def test_rejects_long_prefill_threshold_below_the_canvas(self) -> None:
+        MetalPlatform._check_diffusion_config(
+            _vllm_config(long_prefill_token_threshold=_CANVAS)
+        )
+        with pytest.raises(NotImplementedError, match="long-prefill-token-threshold"):
+            MetalPlatform._check_diffusion_config(
+                _vllm_config(long_prefill_token_threshold=_CANVAS - 1)
+            )
 
     def test_rejects_unsupported_diffusion_model_types(self) -> None:
         with pytest.raises(NotImplementedError, match="llada"):
