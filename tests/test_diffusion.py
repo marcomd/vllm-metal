@@ -542,6 +542,24 @@ class TestPlatformDiffusionConfig:
         with pytest.raises(VLLMValidationError, match="Logprobs"):
             MetalPlatform.validate_request(None, SamplingParams(logprobs=2))
 
+    @pytest.mark.parametrize(
+        ("params", "parameter"),
+        [({"top_k": 5}, "top_k"), ({"top_p": 0.9}, "top_p")],
+    )
+    def test_rejects_top_k_and_top_p_while_serving_diffusion(
+        self, monkeypatch, params, parameter
+    ) -> None:
+        from vllm.exceptions import VLLMValidationError
+        from vllm.sampling_params import SamplingParams
+
+        monkeypatch.setattr(MetalPlatform, "_serves_diffusion", True)
+
+        # Disabled values (the defaults, or top_k=-1) are accepted.
+        MetalPlatform.validate_request(None, SamplingParams(top_k=-1, top_p=1.0))
+        with pytest.raises(VLLMValidationError, match=parameter) as exc_info:
+            MetalPlatform.validate_request(None, SamplingParams(**params))
+        assert exc_info.value.parameter == parameter
+
     def test_rejects_turboquant(self, monkeypatch) -> None:
         import vllm_metal.platform as platform_mod
 

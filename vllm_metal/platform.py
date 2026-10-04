@@ -302,6 +302,18 @@ class MetalPlatform(Platform):
                 "Logprobs are not supported for diffusion models on Metal yet.",
                 parameter="logprobs",
             )
+        # Upstream's diffusion sampler applies top_k/top_p to the canvas; the
+        # Metal one does not, so refuse them rather than ignore them.
+        if cls._serves_diffusion:
+            for name, enabled in (
+                ("top_k", params.top_k > 0),
+                ("top_p", params.top_p < 1.0),
+            ):
+                if enabled:
+                    raise VLLMValidationError(
+                        f"{name} is not supported for diffusion models on Metal yet.",
+                        parameter=name,
+                    )
 
     @classmethod
     def get_torch_device(cls, device_id: int = 0) -> torch.device:

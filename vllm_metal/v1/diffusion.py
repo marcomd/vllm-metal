@@ -284,12 +284,14 @@ def self_conditioning_embeddings(model: Any, processed_logits: mx.array) -> mx.a
 
 
 def _warn_ignored_sampling_params(params: SamplingParams) -> None:
-    """The canvas sampler only follows the model's temperature schedule."""
+    """The canvas sampler only follows the model's temperature schedule.
+
+    Upstream ignores penalties the same way; top_k/top_p, which it applies,
+    are refused in ``MetalPlatform.validate_request``.
+    """
     ignored = [
         name
         for name, is_set in (
-            ("top_k", params.top_k is not None and params.top_k > 0),
-            ("top_p", params.top_p < 1.0),
             ("presence_penalty", params.presence_penalty != 0.0),
             ("frequency_penalty", params.frequency_penalty != 0.0),
             ("repetition_penalty", params.repetition_penalty != 1.0),
