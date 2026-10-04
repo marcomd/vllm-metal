@@ -407,6 +407,33 @@ class TestV1RunnerGuardPatch:
         assert unsupported(config("diffusion_gemma")) == ["other"]
         assert unsupported(config("llada")) == ["diffusion models", "other"]
 
+    def test_shares_one_wrapper_with_the_dspark_bridge(self, monkeypatch) -> None:
+        from vllm.config import VllmConfig
+
+        from vllm_metal.patches.dspark_config import enable_dspark_for_metal_runner
+
+        def upstream(self):
+            return ["diffusion models", "dspark speculative decoding", "other"]
+
+        monkeypatch.setattr(
+            VllmConfig, "_get_v1_model_runner_unsupported_features", upstream
+        )
+        compat.ensure_vllm_v1_diffusion_guard_patch()
+        enable_dspark_for_metal_runner()
+        unsupported = VllmConfig._get_v1_model_runner_unsupported_features
+
+        assert unsupported.__wrapped__ is upstream
+        config = SimpleNamespace(
+            model_config=SimpleNamespace(
+                hf_config=SimpleNamespace(model_type="diffusion_gemma")
+            ),
+            parallel_config=SimpleNamespace(
+                worker_cls="vllm_metal.v1.worker.MetalWorker"
+            ),
+            speculative_config=SimpleNamespace(method="dspark"),
+        )
+        assert unsupported(config) == ["other"]
+
 
 class TestPlatformDiffusionConfig:
     @pytest.fixture(autouse=True)

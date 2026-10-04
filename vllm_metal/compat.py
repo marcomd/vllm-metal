@@ -56,24 +56,18 @@ def ensure_vllm_v1_diffusion_guard_patch() -> None:
     ``VllmConfig.__post_init__`` before the V1 validation: importing
     ``vllm.config`` at plugin registration is circular.
     """
-    from vllm.config import VllmConfig
+    from vllm_metal.patches.v1_runner_guard import allow_v1_runner_feature
 
-    original = getattr(VllmConfig, "_get_v1_model_runner_unsupported_features", None)
-    if original is None or getattr(original, "_vllm_metal_patched", False):
-        return
+    def serves_diffusion_model(vllm_config: Any) -> bool:
+        from vllm_metal.v1.diffusion import SUPPORTED_DIFFUSION_MODEL_TYPES
 
-    def _unsupported_features(self: Any) -> list[str]:
-        unsupported = original(self)
-        model_config = self.model_config
-        if "diffusion models" in unsupported and model_config is not None:
-            from vllm_metal.v1.diffusion import SUPPORTED_DIFFUSION_MODEL_TYPES
+        model_config = vllm_config.model_config
+        return (
+            model_config is not None
+            and model_config.hf_config.model_type in SUPPORTED_DIFFUSION_MODEL_TYPES
+        )
 
-            if model_config.hf_config.model_type in SUPPORTED_DIFFUSION_MODEL_TYPES:
-                unsupported = [f for f in unsupported if f != "diffusion models"]
-        return unsupported
-
-    _unsupported_features._vllm_metal_patched = True  # type: ignore[attr-defined]
-    VllmConfig._get_v1_model_runner_unsupported_features = _unsupported_features
+    allow_v1_runner_feature("diffusion models", serves_diffusion_model)
 
 
 def _patch_torch_mps_empty_host_cache() -> None:
