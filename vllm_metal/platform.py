@@ -957,6 +957,14 @@ class MetalPlatform(Platform):
             raise NotImplementedError(
                 "LoRA is not supported with diffusion models on Metal."
             )
+        # The decoder's bidirectional canvas needs the mm_prefix kernel or the
+        # recompute, and neither reads a TurboQuant cache: the first denoising
+        # step would fail the engine step.
+        if get_config().turboquant:
+            raise NotImplementedError(
+                "TurboQuant KV cache is not supported with diffusion models on "
+                'Metal; drop "turboquant" from --additional-config.'
+            )
         # The diffusion runtime is text-only. Zero modality limits turn an
         # image/video request into a per-request validation error instead of an
         # encoder input that would fail the whole engine step. Not

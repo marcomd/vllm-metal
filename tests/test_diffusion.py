@@ -456,6 +456,15 @@ class TestPlatformDiffusionConfig:
         with pytest.raises(VLLMValidationError, match="Logprobs"):
             MetalPlatform.validate_request(None, SamplingParams(logprobs=2))
 
+    def test_rejects_turboquant(self, monkeypatch) -> None:
+        import vllm_metal.platform as platform_mod
+
+        monkeypatch.setattr(
+            platform_mod, "get_config", lambda: SimpleNamespace(turboquant=True)
+        )
+        with pytest.raises(NotImplementedError, match="TurboQuant"):
+            MetalPlatform._check_diffusion_config(_vllm_config())
+
     def test_rejects_unsupported_diffusion_model_types(self) -> None:
         with pytest.raises(NotImplementedError, match="llada"):
             MetalPlatform._check_diffusion_config(_vllm_config(model_type="llada"))
