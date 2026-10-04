@@ -220,7 +220,7 @@ def encoder_hidden_states(model: Any, input_ids: mx.array) -> mx.array:
     """Causal encoder pass: plain embeddings, encoder ``layer_scalar``s."""
     backbone = _backbone(model)
     text = backbone.decoder
-    h = backbone.encoder._embed_inputs(input_ids)
+    h = model.get_input_embeddings(input_ids).inputs_embeds
     scalars = [layer.layer_scalar for layer in backbone.encoder.language_model.layers]
     for layer, scalar in zip(text.layers, scalars, strict=True):
         h = layer(h, None, None, layer_scalar=scalar)

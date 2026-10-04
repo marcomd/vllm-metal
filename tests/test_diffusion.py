@@ -407,6 +407,36 @@ class TestRuntimeStepProtocol:
         assert "r" not in rt._runner._request_states
 
 
+class TestEncoderHiddenStates:
+    def test_embeds_through_the_public_input_embeddings_api(self) -> None:
+        seen = {}
+
+        def get_input_embeddings(input_ids):
+            seen["input_ids"] = input_ids.tolist()
+            return SimpleNamespace(inputs_embeds=mx.ones((1, 2, _HIDDEN)))
+
+        def layer(h, mask, cache, *, layer_scalar):
+            return h * layer_scalar
+
+        decoder = SimpleNamespace(layers=[layer, layer], norm=lambda h: h + 1)
+        encoder_layers = [SimpleNamespace(layer_scalar=s) for s in (2.0, 3.0)]
+        model = SimpleNamespace(
+            get_input_embeddings=get_input_embeddings,
+            model=SimpleNamespace(
+                decoder=decoder,
+                encoder=SimpleNamespace(
+                    language_model=SimpleNamespace(layers=encoder_layers)
+                ),
+            ),
+        )
+
+        hidden = diffusion.encoder_hidden_states(model, mx.array([[5, 6]]))
+
+        assert seen["input_ids"] == [[5, 6]]
+        # Decoder layers scaled by the encoder's layer_scalars, then the norm.
+        assert mx.array_equal(hidden, mx.full((1, 2, _HIDDEN), 7.0))
+
+
 class TestDecoderForwardContext:
     def test_decoder_marks_each_canvas_bidirectional_on_every_layer(
         self, monkeypatch
