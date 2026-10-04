@@ -358,6 +358,7 @@ class TestDecoderForwardContext:
             ctx = get_context()
             seen["ranges"] = ctx.segment_bidi_ranges
             seen["kinds"] = ctx.bidi_layer_kinds
+            seen["anchored"] = ctx.bidi_window_at_block_start
             seen["soft"] = soft_embeddings.shape
             return mx.zeros((1, input_ids.shape[1], _HIDDEN))
 
@@ -380,6 +381,7 @@ class TestDecoderForwardContext:
 
         assert seen["ranges"] == [[(10, 14)], [(20, 24)]]
         assert seen["kinds"] == frozenset({"sliding", "full"})
+        assert seen["anchored"] is True
         assert seen["soft"] == (1, 8, _HIDDEN)
         assert get_context() is None
 

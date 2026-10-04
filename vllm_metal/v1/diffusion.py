@@ -21,7 +21,10 @@ per-layer ``layer_scalar``; the decoder feeds the embeddings through the
 self-conditioning MLP, attends bidirectionally over the canvas plus the
 committed KV, and uses the decoder ``layer_scalar``. On the paged path the
 decoder's bidirectional canvas is one ``segment_bidi_ranges`` block on every
-layer kind; its K/V lands in the speculative slots the scheduler rolls back.
+layer kind, with the sliding window anchored at the canvas start
+(``bidi_window_at_block_start``): every canvas row sees the last
+``sliding_window - 1`` committed tokens and the whole canvas, as in mlx_vlm's
+decoder masks. Its K/V lands in the speculative slots the scheduler rolls back.
 
 The sampler mirrors upstream ``DiffusionSampler`` / mlx_vlm's entropy-bound
 loop: linear temperature schedule ``t_max -> t_min``, categorical sample,
@@ -452,6 +455,7 @@ class DiffusionGemmaRuntime:
                 hidden = encoder_hidden_states(runner.model, input_ids)
             else:
                 ctx.bidi_layer_kinds = _ALL_LAYER_KINDS
+                ctx.bidi_window_at_block_start = True
                 ctx.segment_bidi_ranges = [
                     [(s.start_pos, s.start_pos + len(s.token_ids))] for s in segments
                 ]
