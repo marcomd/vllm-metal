@@ -125,8 +125,11 @@ class TestDiffusionSettings:
         with pytest.raises(ValueError, match="max_denoising_steps"):
             DiffusionSettings.from_vllm_config(_vllm_config(gen_config=gen))
 
-    def test_defaults_max_denoising_steps_when_unset(self) -> None:
+    @pytest.mark.parametrize("missing", ["absent", "null"])
+    def test_defaults_max_denoising_steps_when_unset(self, missing) -> None:
         gen = {k: v for k, v in _GEN_CONFIG.items() if k != "max_denoising_steps"}
+        if missing == "null":
+            gen["max_denoising_steps"] = None
 
         settings = DiffusionSettings.from_vllm_config(_vllm_config(gen_config=gen))
 
