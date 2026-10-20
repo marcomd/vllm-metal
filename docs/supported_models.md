@@ -176,7 +176,7 @@ sliding-window attention (SWA) is not fully optimized.
 
 Block-diffusion LMs generate a whole canvas of tokens per block through
 iterative denoising. DiffusionGemma also supports sample logprobs and
-[structured decisions](diffusion_gemma.md) for yes/no, choice, and score questions.
+[structured decisions](structured_decisions.md) for yes/no, choice, and score questions.
 
 | Model | MLX | PyTorch MPS | Runner | Scope | Example checkpoint |
 | --- | --- | --- | --- | --- | --- |
