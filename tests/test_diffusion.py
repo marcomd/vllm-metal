@@ -673,10 +673,16 @@ class TestRuntimeStepProtocol:
         soft = rt._soft_embeddings(rt._requests["r"], _CANVAS)
         assert soft.sum(axis=-1).tolist() == [0, _HIDDEN, 0, _HIDDEN]
 
-    def test_step_cap_is_per_request(self, runtime) -> None:
+    @pytest.mark.parametrize(
+        "extra_args",
+        [None, {"diffusion_max_steps": None}],
+        ids=["omitted", "explicit-none"],
+    )
+    def test_step_cap_is_per_request(self, runtime, extra_args) -> None:
         rt, _ = runtime
         capped = SamplingParams(extra_args={"diffusion_max_steps": 1})
-        _step(rt, new_reqs=[_new_req("capped", capped), _new_req("free")])
+        free = SamplingParams(extra_args=extra_args)
+        _step(rt, new_reqs=[_new_req("capped", capped), _new_req("free", free)])
 
         _step(rt, "capped", "free")  # only the capped canvas converges
         out = _step(rt, "capped", "free")

@@ -461,11 +461,11 @@ class DiffusionGemmaRuntime:
         """
         args = params.extra_args or {}
         settings = self.settings
+        max_steps = args.get("diffusion_max_steps")
+        if max_steps is None:
+            max_steps = settings.max_denoising_steps
         request = _DiffusionRequest(
-            max_steps=min(
-                int(args.get("diffusion_max_steps", settings.max_denoising_steps)),
-                settings.max_denoising_steps,
-            ),
+            max_steps=min(int(max_steps), settings.max_denoising_steps),
             read_only=bool(args.get("diffusion_read_only", False)),
         )
         seed = args.get("diffusion_seed_canvas")
